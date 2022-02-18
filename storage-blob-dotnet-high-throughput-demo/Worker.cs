@@ -73,7 +73,9 @@ namespace Sample_HighThroughputBlobUpload
 
                 TestOperation operation = message.Operation;
 
-                if (operation is PutBlobOperation || operation is GetBlobOperation)
+                if (operation is PutBlobOperation 
+                    || operation is GetBlobOperation
+                    || operation is AppendBlockOperation)
                 {
                     // Define the task to be performed.
                     Func<Task<TimeSpan>> executeOperation = null;
@@ -89,6 +91,12 @@ namespace Sample_HighThroughputBlobUpload
                         var detailedOperation = operation as GetBlobOperation;
 
                         executeOperation = () => { return GetBlocksAsync(blobClient_, container, detailedOperation.BlobName, detailedOperation.StartIndex, detailedOperation.LengthBytes, detailedOperation.ChunkSizeBytes, levelOfConcurrency); };
+                    }
+                    else if (operation is AppendBlockOperation)
+                    {
+                        var detailedOperation = operation as AppendBlockOperation;
+
+                        executeOperation = () => { return AppendBlocksAsync(blobClient_, container, detailedOperation.BlobName, detailedOperation.BlockSizeBytes, detailedOperation.NumBlocks, levelOfConcurrency); };
                     }
 
 
@@ -153,7 +161,7 @@ namespace Sample_HighThroughputBlobUpload
         {
             DataContractJsonSerializerSettings serializerSettings = new DataContractJsonSerializerSettings
             {
-                KnownTypes = new Type[] { typeof(GetBlobOperation), typeof(PutBlobOperation) }
+                KnownTypes = new Type[] { typeof(GetBlobOperation), typeof(PutBlobOperation), typeof(AppendBlockOperation)}
             };
             DataContractJsonSerializer deserializer = new DataContractJsonSerializer(typeof(TestMsg), serializerSettings);
 
@@ -325,6 +333,98 @@ namespace Sample_HighThroughputBlobUpload
             catch (Exception ex)
             {
                 Console.WriteLine($"An error occurred while executing GetBlocksAsync.  Details: {ex.Message}");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Responsible for uploading the specified number of blocks to the named blob.
+        /// </summary>
+        /// <param name="blobClient">The client to use when interracting with the Blob service.</param>
+        /// <param name="container">The targeted blob container.</param>
+        /// <param name="blobName">The name of the blob being uploaded.</param>
+        /// <param name="nBlocks">The number of blocks to upload.</param>
+        /// <param name="levelOfConcurrency">The number of operations to execute concurrently.</param>
+        /// <returns></returns>
+        public static async Task<TimeSpan> AppendBlocksAsync
+            (CloudBlobClient blobClient,
+             CloudBlobContainer container,
+             string blobName,
+             uint blockSizeBytes,
+             uint nBlocks,
+             uint levelOfConcurrency)
+        {
+            // Cap the number of parallel AppendBlock requests from this process as specified.
+            int concurrencyLevel = (int)levelOfConcurrency;
+
+            // Create a buffer of the given size.
+            byte[] buffer = new byte[blockSizeBytes];
+            Random rand = new Random();
+            rand.NextBytes(buffer);
+
+            try
+            {
+                CloudAppendBlob appendBlob = container.GetAppendBlobReference(blobName);
+
+                Stopwatch stopwatch = new Stopwatch();
+                stopwatch.Start();
+
+                List<Task> tasks = new List<Task>();
+                SemaphoreSlim semaphore = new SemaphoreSlim(concurrencyLevel, concurrencyLevel);
+                Random rng = new Random();
+                for (uint i = 0; i < nBlocks; ++i)
+                {
+                    MemoryStream ms = new MemoryStream(buffer);
+
+                    await semaphore.WaitAsync();
+
+                    BlobRequestOptions options = new BlobRequestOptions
+                    {
+                        // Tell the server to give up on the operation if it takes an exceptionally long period of time.
+                        // Note: This timeout should be fine-tuned based on a number of factors including:
+                        //       1) Performance Tier (Standard vs Premium)
+                        //       2) Size of the Operation
+                        //       3) Network Latency between Client and Server
+                        ServerTimeout = TimeSpan.FromSeconds(rng.Next(10, 11))
+                    };
+
+
+                    tasks.Add(appendBlob.AppendBlockAsync(ms, null, AccessCondition.GenerateEmptyCondition(), options, null).ContinueWith((t) =>
+                    {
+                        if (t.IsCompletedSuccessfully)
+                        {
+                            semaphore.Release();
+                        }
+                        else
+                        {
+                            Console.WriteLine($"AppendBlock request failed after 10 retries.");
+                            throw t.Exception;
+                        }
+                    }));
+                }
+
+                Console.WriteLine("All AppendBlock requests issued.  Waiting for the remainder to complete.");
+                Task completionTask = Task.WhenAll(tasks);
+                await completionTask;
+
+                // If any failures occurred, communicate them and propagate an aggregate exception to indicate a failed test.
+                if (completionTask.IsFaulted)
+                {
+                    Console.WriteLine("An error occurred while executing one or more of the PutBlock operations. Details:");
+                    foreach (Exception ex in completionTask.Exception.InnerExceptions)
+                    {
+                        Console.WriteLine($"\t{ex.Message}");
+                    }
+                    throw completionTask.Exception;
+                }
+
+                stopwatch.Stop();
+
+                return stopwatch.Elapsed;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred while executing UploadBlocksAsync.  Details: {ex.Message}");
                 throw;
             }
         }

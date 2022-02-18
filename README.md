@@ -104,7 +104,7 @@ The application will assume the role of a Worker and will continusouly perform t
 Navigate to your application directory and run the application with the `dotnet run` command.
 
 ### Arguments
-- `arg0: Operation` (Upload)
+- `arg0: Operation` (Upload for BlockBlob | Append for AppendBlob)
 Specifies the operation to perform.  Must be assigned a value of "Upload" to perform an upload operation.
 - `arg1: Block Size`
 Specifies the size of each block in bytes.

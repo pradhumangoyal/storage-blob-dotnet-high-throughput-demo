@@ -177,7 +177,7 @@ namespace Sample_HighThroughputBlobUpload
             return false;
         }
 
-        private bool ParseArguments(string[] args, out uint blockSizeBytes, out uint numBlocks, out uint numInstances, out string blobName, out string containerName)
+        protected bool ParseArguments(string[] args, out uint blockSizeBytes, out uint numBlocks, out uint numInstances, out string blobName, out string containerName)
         {
             const uint MAX_BLOCKS = 50000; // Maximum number of blocks that can be committed.
             bool isValid = true;

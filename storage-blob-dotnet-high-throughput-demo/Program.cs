@@ -100,6 +100,9 @@ namespace Sample_HighThroughputBlobUpload
                         case "download":
                             testRunner = new DownloadTestRunner(storageAccount);
                             break;
+                        case "append":
+                            testRunner = new AppendTestRunner(storageAccount);
+                            break;
                         default:
                             Console.WriteLine($"[ERROR] Operation '{operation}' unsupported.");
                             break;
